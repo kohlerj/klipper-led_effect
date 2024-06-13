@@ -59,6 +59,7 @@ link_extension()
 {
     echo -n "Linking extension to Klipper... "
     ln -sf "${SRCDIR}/led_effect.py" "${KLIPPER_PATH}/klippy/extras/led_effect.py"
+    ln -sf "${SRCDIR}/led_effect_background_updater.py" "${KLIPPER_PATH}/klippy/extras/led_effect_background_updater.py"
     echo "[OK]"
 }
 
