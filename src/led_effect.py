@@ -6,6 +6,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+import logging
 from math import cos, exp, pi
 from random import randint
 
@@ -54,6 +55,140 @@ class colorArray(list):
         self.__init__(self.n, v * a + self)
     def padRight(self, v, a):
         self += v * a
+
+######################################################################
+# LED Effect handler
+######################################################################
+
+class ledBackgroundHandler:
+    def __init__(self, config):
+        self.printer = config.get_printer()
+        self.gcode   = self.printer.lookup_object('gcode')
+
+        self.gcode.register_command('ACTIVATE_BACKGROUND_LED_UPDATE',
+                            self.cmd_ACTIVATE_BACKGROUND_LED_UPDATE,
+                            desc=self.cmd_ACTIVATE_BACKGROUND_LED_UPDATE_help)
+
+        self.gcode.register_command('DEACTIVATE_BACKGROUND_LED_UPDATE',
+                            self.cmd_DEACTIVATE_BACKGROUND_LED_UPDATE,
+                            desc=self.cmd_DEACTIVATE_BACKGROUND_LED_UPDATE_help)
+        
+        self._active = False
+        
+        self._fadeDuration = config.getfloat('fade_duration', default=0.5, minval=0.0, maxval=5)
+
+        updateFrequency = config.getfloat('update_frequency', default=1, minval=0.1, maxval=5)
+        self._updateRate = 1.0 / updateFrequency
+
+        self._states = ["ready", "cancelled", "printing", "homing", "error", "paused", "resuming", "meshing", "leveling"]
+
+        self._statesToEffectNamesMap = {}
+        for state in self._states:
+            self._statesToEffectNamesMap[state] = config.getlist(state)
+
+        self.printer.register_event_handler('klippy:connect', self._handle_connect)
+        
+    cmd_ACTIVATE_BACKGROUND_LED_UPDATE_help = 'Activates the background led update'
+    cmd_DEACTIVATE_BACKGROUND_LED_UPDATE_help = 'Deactivates the background led update'
+
+    def cmd_ACTIVATE_BACKGROUND_LED_UPDATE(self):
+        self._active = True
+
+    def cmd_DEACTIVATE_BACKGROUND_LED_UPDATE(self):
+        self._active = False
+        
+    def _handle_connect(self):
+        self._displayStatus = self.printer.lookup_object('display_status')
+        self._printStats = self.printer.lookup_object('print_stats')
+        self._idleTimeout = self.printer.lookup_object('idle_timeout')
+
+        effects = {}
+        for effect in self.printer.lookup_objects('led_effect'):
+            effects[effect.name] = effect
+
+        self._statesToEffectsMap = {}
+        for state, effectNames in self._statesToEffectNamesMap.items():
+            self._statesToEffectsMap[state] = []
+            for effectName in effectNames:
+                if effectName not in effects.keys():
+                    raise self.printer.config_error(
+                        "Effect '%s' for state '%s' is configured but not found as led_effect" % (effectName, state))
+
+                self._statesToEffectsMap[state].append(effects[effectName])
+
+        self._updateTimer = self.reactor.register_timer(self._update, self.reactor.NOW)
+
+
+    def _compute_state(self):
+        
+        idle_timeout_state = self._idleTimeout.state
+        print_stats_state = self._printStats.state
+        message_state = self._displayStatus.message
+
+        logging.debug('idle_timeout_state: %s, print_stats_state: %s, message_state: %s', idle_timeout_state, print_stats_state, message_state)
+
+        if idle_timeout_state == 'idle':
+            state = 'ready'
+        elif idle_timeout_state == 'ready':
+            if print_stats_state == 'error':
+                state = 'error'
+            elif print_stats_state == 'cancelled':
+                state = 'cancelled'
+            elif print_stats_state == 'paused':
+                state = 'paused'
+            elif print_stats_state == 'complete':
+                state = 'done_printing'
+            elif print_stats_state == 'standby':
+                state = 'ready'
+            else:
+                logging.warning('Unknown print_stats state: %s in idle_timeout_state "idle"', print_stats_state)
+                state = 'ready'
+        
+        elif idle_timeout_state == 'printing':
+         if 'homing' in message_state:
+            state = 'homing'
+         elif 'meshing' in message_state:
+            state = 'meshing'
+         elif 'leveling' in message_state:
+            state = 'leveling'
+         elif 'purging' in message_state:
+            state = 'purging'
+         elif 'cleaning' in message_state:
+            state = 'cleaning'
+         elif 'heating chamber' in message_state:
+            state = 'heating_chamber'
+         elif 'heating bed' in message_state:
+            state = 'heating_bed'
+         elif 'heating nozzle' in message_state:
+             state = 'heating_nozzle'
+         else:
+             if print_stats_state == 'printing':
+                state = 'printing'
+             else:
+                state = 'ready'
+        else:
+            logging.warning('Unknown idle_timeout state: %s', idle_timeout_state)
+            state = 'ready'
+
+        return state
+        
+
+
+    def _update(self, eventtime):
+        if self._active:
+
+            state = self._compute_state()
+
+            for effect in self._statesToEffectsMap[state]:
+                effect.set_led_effect(fadetime = self._fadeDuration, replace=True)           
+
+        return eventtime + self._updateRate
+
+
+
+
+# def load_config(config):
+#     return ledBackgroundHandler(config)
 
 ######################################################################
 # LED Effect handler
@@ -514,29 +649,40 @@ class ledEffect:
             self.fadeValue = 0.0
 
     def cmd_SET_LED_EFFECT(self, gcmd):
-        parmFadeTime = gcmd.get_float('FADETIME', 0.0)
+        fadetime = gcmd.get_float('FADETIME', 0.0)
+        stop = gcmd.get_int('STOP', 0) >= 1
+        replace = gcmd.get_int('REPLACE', 0) >= 1
+        restart = gcmd.get_int('RESTART', 0) >= 1
+        params = gcmd.get_command_parameters()
+        rawparams = gcmd.get_raw_command_parameters()
 
-        if gcmd.get_int('STOP', 0) >= 1:
+        self.set_led_effect(fadetime = fadetime, stop = stop, 
+                            replace = replace, restart = restart, 
+                            params = params, rawparams = rawparams)
+
+    def set_led_effect(self, fadetime = 0.0, stop = False, replace = False, restart = False, params = None, rawparams = None):
+
+        if stop:
             if self.enabled:
-                self.set_fade_time(parmFadeTime)
+                self.set_fade_time(fadetime)
             self.set_enabled(False)
         else:
             if self.recalculate:
                 kwargs = self.layerTempl.create_template_context()
-                kwargs['params'] = gcmd.get_command_parameters()
-                kwargs['rawparams'] = gcmd.get_raw_command_parameters()
+                kwargs['params'] = params
+                kwargs['rawparams'] = rawparams
                 self._generateLayers(kwargs)
-            if gcmd.get_int('REPLACE',0) >= 1:
+            if replace:
                 for led in self.leds:
                     for effect in self.handler.effects:
                         if effect is not self and led in effect.leds:
                             if effect.enabled:
-                                effect.set_fade_time(parmFadeTime)
+                                effect.set_fade_time(fadetime)
                             effect.set_enabled(False)
 
             if not self.enabled:
-                self.set_fade_time(parmFadeTime)
-            if gcmd.get_int('RESTART', 0) >= 1:
+                self.set_fade_time(fadetime)
+            if restart:
                 self.reset_frame()
             self.set_enabled(True)
 
