@@ -287,7 +287,7 @@ class ledBackgroundHandler:
     def stats(self, eventtime):
         is_active = eventtime - self._lastStateChange < 30.
         return is_active, '%s: last_state=%s its=%s pss=%s sc=%s' % (
-            self.short_name, self._lastState, self._idleTimeout.state.lower(), self._printStats.state.lower(), self._stateComplement)
+            self.short_name, self._lastState.value, self._idleTimeout.state.lower(), self._printStats.state.lower(), self._stateComplement)
 
 
 def load_config(config):
