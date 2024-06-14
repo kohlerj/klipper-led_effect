@@ -83,6 +83,8 @@ class ledBackgroundHandler:
             desc=self.cmd_RESET_BACKGROUND_LED_UPDATE_COMPLEMENT_help,
         )
 
+        self.short_name = 'bckgnd_led_updater'
+
         self._active = False
 
         self._fadeDuration = config.getfloat(
@@ -94,11 +96,11 @@ class ledBackgroundHandler:
         )
         self._updateRate = 1.0 / updateFrequency
 
-        self._lastComputedState = State.READY
-
         self._statesToEffectNamesMap = {}
 
-        self._stateComplement = ""
+        self._stateComplement = []
+
+        self._lastState = []
 
         for state in State:
             self._statesToEffectNamesMap[state] = config.getlist(
@@ -106,6 +108,7 @@ class ledBackgroundHandler:
             )
 
         self.printer.register_event_handler("klippy:connect", self._handle_connect)
+        self.printer.register_event_handler("klippy:ready", self._handle_ready)
 
     cmd_ACTIVATE_BACKGROUND_LED_UPDATE_help = "Activates the background led update"
     cmd_DEACTIVATE_BACKGROUND_LED_UPDATE_help = "Deactivates the background led update"
@@ -124,11 +127,13 @@ class ledBackgroundHandler:
                 % [state.value for state in StateComplement]
             )
 
-        self._stateComplement = stateComplement
-        logging.info("Set led effect state to %s", self._stateComplement)
+        self.toolhead.wait_moves()
+        self._stateComplement.append(stateComplement)
+        logging.info("Add led effect state to list of stateComplement %s", self._stateComplement)
 
     def cmd_RESET_BACKGROUND_LED_UPDATE_COMPLEMENT(self, gcmd):
-        self._stateComplement = ""
+        self.toolhead.wait_moves()
+        self._stateComplement.pop()
 
     def cmd_ACTIVATE_BACKGROUND_LED_UPDATE(self, gcmd):
         self._active = True
@@ -140,6 +145,8 @@ class ledBackgroundHandler:
         self._printStats = self.printer.lookup_object("print_stats")
         self._idleTimeout = self.printer.lookup_object("idle_timeout")
         self.reactor = self.printer.get_reactor()
+
+        self._lastStateChange = self.reactor.NOW
 
         effects = {}
 
@@ -166,107 +173,121 @@ class ledBackgroundHandler:
 
         self._updateTimer = self.reactor.register_timer(self._update, self.reactor.NOW)
 
+    def _handle_ready(self):
+
+        self.toolhead = self.printer.lookup_object('toolhead')
+        
+
     def _compute_state(self):
-        idle_timeout_state = self._idleTimeout.state.lower()
-        print_stats_state = self._printStats.state.lower()
-        state_complement = self._stateComplement
+        idleTimeoutState = self._idleTimeout.state.lower()
+        printStatsState = self._printStats.state.lower()
+        stateComplement = self._stateComplement[-1] if len(self._stateComplement) > 0 else ""
 
-        logging.info(
-            "idle_timeout_state: %s, print_stats_state: %s, state_complement: %s",
-            idle_timeout_state,
-            print_stats_state,
-            state_complement,
-        )
-
-        if idle_timeout_state == "idle":
+        if idleTimeoutState == "idle":
             state = State.OFF
 
-        elif idle_timeout_state == "ready":
-            if print_stats_state == "standby":
+            # we can no longer be in a nested state so we clear the state complement
+            if len(self._stateComplement) > 0:
+                self._stateComplement = []
+
+        elif idleTimeoutState == "ready":
+
+            # we can no longer be in a nested state so we clear the state complement
+            if len(self._stateComplement) > 0:
+                self._stateComplement = []
+
+            if printStatsState == "standby":
                 state = State.READY
 
-            elif print_stats_state == "printing":
+            elif printStatsState == "printing":
                 raise "printing print_stats state in idle_timeout state 'ready' should not be possible"  # This should never happen
 
-            elif print_stats_state == "complete":
+            elif printStatsState == "complete":
                 state = State.DONE_PRINTING
 
-            elif print_stats_state == "paused":
+            elif printStatsState == "paused":
                 state = State.PAUSED
 
-            elif print_stats_state == "cancelled":
+            elif printStatsState == "cancelled":
                 state = State.CANCELLED
 
-            elif print_stats_state == "error":
+            elif printStatsState == "error":
                 state = State.ERROR
 
             else:
                 logging.error(
                     'Unknown print_stats    state: %s in idle_timeout_state "idle"',
-                    print_stats_state,
+                    printStatsState,
                 )
                 state = State.READY
 
-        elif idle_timeout_state == "printing":
-            if print_stats_state == "standby":
-                if state_complement:
-                    state = State(state_complement)
+        elif idleTimeoutState == "printing":
+            if printStatsState == "standby":
+                if stateComplement:
+                    state = State(stateComplement)
                 else:
                     state = State.BUSY
 
-            elif print_stats_state == "printing":
-                if state_complement:
-                    state = State(state_complement)
+            elif printStatsState == "printing":
+                if stateComplement:
+                    state = State(stateComplement)
                 else:
                     state = State.PRINTING
 
-            elif print_stats_state == "complete":
+            elif printStatsState == "complete":
                 state = State.PRINT_COMPLETE
 
-            elif print_stats_state == "paused":
-                if state_complement == State.CANCELLING.value:
+            elif printStatsState == "paused":
+                if stateComplement == State.CANCELLING.value:
                     state = State.CANCELLING
-                elif state_complement == State.RESUMING.value:
+                elif stateComplement == State.RESUMING.value:
                     state = State.RESUMING
                 else:
                     state = State.PAUSED
 
-            elif print_stats_state == "cancelled":
+            elif printStatsState == "cancelled":
                 state = State.CANCELLED
 
-            elif print_stats_state == "error":
+            elif printStatsState == "error":
                 state = State.ERROR
 
             else:
                 logging.error(
                     'Unknown print_stats    state: %s in idle_timeout_state "idle"',
-                    print_stats_state,
+                    printStatsState,
                 )
                 state = State.BUSY
         else:
-            logging.error("Unknown idle_timeout state: %s", idle_timeout_state)
+            logging.error("Unknown idle_timeout state: %s", idleTimeoutState)
             state = State.READY
 
-        self._lastComputedState = state
-
-        logging.info("Computed state: %s", state)
+        logging.debug("Computed state: %s from idle_timeout_state: %s, print_stats_state: %s, state_complement: %s", state, idleTimeoutState, printStatsState, self._stateComplement)
 
         return state
 
     def _update(self, eventtime):
-        if self._active:
-            state = self._compute_state()
 
-            for effect in self._statesToEffectsMap[state]:
-                effect.set_led_effect(fadetime=self._fadeDuration, replace=True)
+        state = self._compute_state()
+
+        if state != self._lastState:
+            self._lastStateChange = eventtime
+            self._lastState = state
+
+            if self._active:
+                for effect in self._statesToEffectsMap[state]:
+                    effect.set_led_effect(fadetime=self._fadeDuration, replace=True)
 
         return eventtime + self._updateRate
 
     def get_status(self, eventtime):
         return {
             "active": self._active,
-            "last_computed_state": self._lastComputedState.value,
         }
+
+    def stats(self, eventtime):
+        is_active = eventtime - self._lastStateChange < 30.
+        return is_active, '%s: last_state=%s its=%s pss=%s sc=%s' % (
+            self.short_name, self._lastState, self._idleTimeout.state.lower(), self._printStats.state.lower(), self._stateComplement)
 
 
 def load_config(config):

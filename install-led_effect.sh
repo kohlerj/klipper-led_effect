@@ -81,7 +81,7 @@ add_updater()
         echo -e "\n" >> ${MOONRAKER_CONFIG_DIR}/moonraker.conf
         while read -r line; do
             echo -e "${line}" >> ${MOONRAKER_CONFIG_DIR}/moonraker.conf
-        done < "$PWD/file_templates/moonraker_update.txt"
+        done < "${SRCDIR}/../file_templates/moonraker_update.txt"
         echo -e "\n" >> ${MOONRAKER_CONFIG_DIR}/moonraker.conf
         echo "[OK]"
         restart_moonraker
@@ -113,6 +113,7 @@ stop_klipper()
 
 uninstall()
 {
+    # TODO Remove background handler as well
     if [ -f "${KLIPPER_PATH}/klippy/extras/led_effect.py" ]; then
         echo -n "Uninstalling... "
         rm -f "${KLIPPER_PATH}/klippy/extras/led_effect.py"
