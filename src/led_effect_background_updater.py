@@ -26,7 +26,7 @@ class StateComplement(Enum):
     CANCELLING = "cancelling"
     PAUSING = "pausing"
     RESUMING = "resuming"
-    OFF = "off"
+
 
 
 class State(Enum):
@@ -37,6 +37,7 @@ class State(Enum):
     PRINTING = "printing"
     PRINT_COMPLETE = "print_complete"
     ERROR = "error"
+    OFF = "off"
 
     # Copy of StateComplement, cannot extend Enum
     BED_HEATING = "bed_heating"
@@ -51,7 +52,6 @@ class State(Enum):
     CANCELLING = "cancelling"
     PAUSING = "pausing"
     RESUMING = "resuming"
-    OFF = "off"
 
 
 class ledBackgroundHandler:
@@ -238,12 +238,10 @@ class ledBackgroundHandler:
                 state = State.PRINT_COMPLETE
 
             elif printStatsState == "paused":
-                if stateComplement == State.CANCELLING.value:
-                    state = State.CANCELLING
-                elif stateComplement == State.RESUMING.value:
-                    state = State.RESUMING
+                if stateComplement:
+                    state = State(stateComplement)
                 else:
-                    state = State.PAUSED
+                    state = State.BUSY
 
             elif printStatsState == "cancelled":
                 state = State.CANCELLED
