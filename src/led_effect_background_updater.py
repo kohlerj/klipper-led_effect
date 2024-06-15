@@ -203,7 +203,7 @@ class ledBackgroundHandler:
                 raise "printing print_stats state in idle_timeout state 'ready' should not be possible"  # This should never happen
 
             elif printStatsState == "complete":
-                state = State.DONE_PRINTING
+                state = State.PRINT_COMPLETE
 
             elif printStatsState == "paused":
                 state = State.PAUSED
