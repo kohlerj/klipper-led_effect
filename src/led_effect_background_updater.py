@@ -30,6 +30,7 @@ class StateComplement(Enum):
 
 
 class State(Enum):
+    UNDEFINED = "undefined"
     READY = "ready"
     BUSY = "busy"
     CANCELLED = "cancelled"
@@ -100,7 +101,7 @@ class ledBackgroundHandler:
 
         self._stateComplement = []
 
-        self._lastState = []
+        self._lastState = State.UNDEFINED
 
         for state in State:
             self._statesToEffectNamesMap[state] = config.getlist(
@@ -137,9 +138,11 @@ class ledBackgroundHandler:
 
     def cmd_ACTIVATE_BACKGROUND_LED_UPDATE(self, gcmd):
         self._active = True
+        self._lastState = []
 
     def cmd_DEACTIVATE_BACKGROUND_LED_UPDATE(self, gcmd):
         self._active = False
+        self._lastState = []
 
     def _handle_connect(self):
         self._printStats = self.printer.lookup_object("print_stats")
