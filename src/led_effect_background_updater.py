@@ -103,7 +103,8 @@ class ledBackgroundHandler:
 
         self._lastState = State.UNDEFINED
 
-        for state in State:
+        gen = (state for state in State if state != State.UNDEFINED)
+        for state in gen:
             self._statesToEffectNamesMap[state] = config.getlist(
                 state.value, default=None
             )
@@ -138,11 +139,11 @@ class ledBackgroundHandler:
 
     def cmd_ACTIVATE_BACKGROUND_LED_UPDATE(self, gcmd):
         self._active = True
-        self._lastState = []
+        self._lastState = State.UNDEFINED
 
     def cmd_DEACTIVATE_BACKGROUND_LED_UPDATE(self, gcmd):
         self._active = False
-        self._lastState = []
+        self._lastState = State.UNDEFINED
 
     def _handle_connect(self):
         self._printStats = self.printer.lookup_object("print_stats")
@@ -203,7 +204,7 @@ class ledBackgroundHandler:
                 state = State.READY
 
             elif printStatsState == "printing":
-                raise "printing print_stats state in idle_timeout state 'ready' should not be possible"  # This should never happen
+                state = State.PRINTING
 
             elif printStatsState == "complete":
                 state = State.PRINT_COMPLETE
