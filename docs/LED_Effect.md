@@ -208,8 +208,8 @@ Example: `stepper: x`
 
 endstops:
 Specifies the endstops the homing effect triggers on. Multiple endstops can be
-specified as a comma seperated list. Possible values are: `x`, `y`, `z` and `probe`.
-Example: `endstops: x, y`
+specified as a comma seperated list. Possible values are: `stepper_x`, `stepper_y`, `stepper_z` and `probe`.
+Example: `endstops: stepper_x, stepper_y`
 
 button_pins:
 Specifies the pins the button effect trigger on. Multiple pins can be specified
@@ -379,6 +379,13 @@ the "head" of the comet and the remaining colors are blended into the "tail"
     Cutoff:       1   Length of tail (somewhat arbitrary)
     Palette:          Color of "head" and gradient of "tail"
 Identical settings as Comet, but with multiple lights chasing each other.
+
+#### Cylon
+    Effect Rate:  1   How fast the cylon sweeps
+    Cutoff:       0   Not used but must be provided
+    Palette:          Color of sweeping LED
+A light moves between each end of the strip. Multiple colors can be provided;
+the color will change after each sweep.
 
 #### Heater
     Effect Rate:  1   Minimum temperature to activate effect

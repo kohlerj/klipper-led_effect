@@ -121,8 +121,9 @@ class ledFrameHandler:
             if not effect.runOnShutown:
                 for chain in self.ledChains:
                     chain.led_helper.set_color(None, (0.0, 0.0, 0.0, 0.0))
-                    chain.led_helper.update_func(chain.led_helper.led_state, None)
-
+                    chain.led_helper.need_transmit = True
+                    chain.led_helper._check_transmit()
+                    
         pass
 
     def _handle_homing_move_begin(self, hmove):
@@ -173,6 +174,9 @@ class ledFrameHandler:
                 self.stepperTimer = self.reactor.register_timer(
                     self._pollStepper, self.reactor.NOW
                 )
+
+        if effect in self.effects:
+            self.effects.remove(effect)
 
         self.effects.append(effect)
 
@@ -251,10 +255,11 @@ class ledFrameHandler:
                     chainsToUpdate.add(chain)
 
         for chain in chainsToUpdate:
-            if hasattr(chain, "prev_data"):
-                chain.prev_data = None  # workaround to force update of dotstars
-            if not self.shutdown:
-                chain.led_helper.update_func(chain.led_helper.led_state, None)
+            if hasattr(chain,"prev_data"):
+                chain.prev_data = None # workaround to force update of dotstars
+            if not self.shutdown: 
+                chain.led_helper.need_transmit = True
+                chain.led_helper._check_transmit()
         if self.effects:
             next_eventtime = min(
                 self.effects, key=lambda x: x.nextEventTime
@@ -383,19 +388,15 @@ class ledEffect:
         self.configLeds = config.get("leds")
 
         self.nextEventTime = 0
-        self.printer.register_event_handler("klippy:ready", self._handle_ready)
-        self.gcode.register_mux_command(
-            "SET_LED_EFFECT",
-            "EFFECT",
-            self.name,
-            self.cmd_SET_LED_EFFECT,
-            desc=self.cmd_SET_LED_help,
-        )
+        self.printer.register_event_handler('klippy:ready', self._handle_ready)
+        self.gcode.register_mux_command('SET_LED_EFFECT', 'EFFECT', self.name,
+                                         self.cmd_SET_LED_EFFECT,
+                                         desc=self.cmd_SET_LED_EFFECT_help)
 
         if self.analogPin:
-            ppins = self.printer.lookup_object("pins")
-            self.mcu_adc = ppins.setup_pin("adc", self.analogPin)
-            self.mcu_adc.setup_minmax(ANALOG_SAMPLE_TIME, ANALOG_SAMPLE_COUNT)
+            ppins = self.printer.lookup_object('pins')
+            self.mcu_adc = ppins.setup_pin('adc', self.analogPin)
+            self.mcu_adc.setup_adc_sample(ANALOG_SAMPLE_TIME, ANALOG_SAMPLE_COUNT)
             self.mcu_adc.setup_adc_callback(ANALOG_REPORT_TIME, self.adcCallback)
             query_adc = self.printer.load_object(self.config, "query_adc")
             query_adc.register_adc(self.name, self.mcu_adc)
@@ -404,7 +405,7 @@ class ledEffect:
             buttons = self.printer.load_object(config, "buttons")
             buttons.register_buttons(self.buttonPins, self.button_callback)
 
-    cmd_SET_LED_help = "Starts or Stops the specified led_effect"
+    cmd_SET_LED_EFFECT_help = 'Starts or Stops the specified led_effect'
 
     def _handle_ready(self):
         self.configChains = self.configLeds.split("\n")
@@ -424,8 +425,8 @@ class ledEffect:
                 if ledChain not in self.ledChains:
                     self.ledChains.append(ledChain)
 
-                if ledIndices == []:
-                    for i in range(ledChain.led_helper.get_led_count()):
+                if ledIndices == [] :
+                    for i in range(ledChain.led_helper.led_count):
                         self.leds.append((ledChain, int(i)))
                 else:
                     for led in ledIndices:
@@ -607,6 +608,9 @@ class ledEffect:
             if restart:
                 self.reset_frame()
             self.set_enabled(True)
+    
+    def get_status(self, eventtime):
+        return {'enabled':self.enabled}
 
     def _handle_shutdown(self):
         self.set_enabled(self.runOnShutown)
@@ -942,7 +946,41 @@ class ledEffect:
 
             self.frameCount = len(self.thisFrame)
 
-    # Color gradient over all LEDs
+    #Cylon, single LED bounces from start to end of strip
+    class layerCylon(_layerBase):
+        def __init__(self,  **kwargs):
+            super(ledEffect.layerCylon, self).__init__(**kwargs)
+
+            self.paletteColors = colorArray(COLORS, self.paletteColors)
+
+            if self.effectRate <= 0:
+                raise Exception("effect rate for cylon must be > 0")
+
+            # How many frames per sweep animation.
+            frames = int(self.effectRate / self.frameRate)
+
+            direction = True
+
+            for _ in range(len(self.paletteColors) % 2 + 1):
+                for c in range(0, len(self.paletteColors)):
+                    color = self.paletteColors[c]
+
+                    for frame in range(frames):
+                        pct = frame / (frames - 1)
+                        newFrame = []
+
+                        p = int(round((self.ledCount - 2) * pct) if direction else 1 + round(((self.ledCount - 2) * (1 - pct))))
+
+                        for i in range(self.ledCount):
+                            newFrame += color if p == i else [0.0] * COLORS
+
+                        self.thisFrame.append(newFrame)
+
+                    direction = not direction
+
+            self.frameCount = len(self.thisFrame)
+
+    #Color gradient over all LEDs
     class layerGradient(_layerBase):
         def __init__(self, **kwargs):
             super(ledEffect.layerGradient, self).__init__(**kwargs)

@@ -39,6 +39,8 @@ class mockPrinter:
                 return self
             elif o == "buttons":
                 return self
+            elif o == "gcode_macro":
+                return self
         return None
     def register_event_handler(self, event, callback):
         pass
@@ -62,7 +64,7 @@ class mockPrinter:
         self.led_effect.handler.stepperPositions=[pos,pos,pos]
     def setup_pin(self, name, pin):
         return self
-    def setup_minmax(self, min, max):
+    def setup_adc_sample(self, min, max):
         pass
     def setup_adc_callback(self, time, adcCallback):
         pass
